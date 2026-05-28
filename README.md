@@ -1,6 +1,6 @@
 # flowlogin
 
-Headless Google OAuth automation that extracts `__Secure-next-auth.session-token` from [Google Flow](https://labs.google/fx/vi/tools/flow) and pushes it to a [Flow2API](https://github.com/samthinking/flow2api) instance.
+Headless Google OAuth automation that extracts `__Secure-next-auth.session-token` from [Google Flow](https://labs.google/fx/vi/tools/flow) and pushes it to a [Flow2API](https://github.com/TheSmallHanCat/flow2api) instance.
 
 ## How it works
 
