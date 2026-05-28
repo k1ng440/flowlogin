@@ -130,8 +130,19 @@ async def google_oauth(page: Page, email: str, password: str) -> bool:
 
     print(f"[*] [{email}] Entering password...")
     try:
-        # Google injects a hidden decoy input[type=password][aria-hidden=true];
-        # target the real visible one by name or by excluding aria-hidden
+        await asyncio.sleep(2)
+        # Dump visible text so we can debug intermediate screens
+        snippet = (await page.inner_text("body"))[:600].replace("\n", " | ")
+        print(f"[*] [{email}] Page after email step: {snippet}")
+
+        # Click "Use your password" if Google shows an alternate sign-in screen
+        use_pwd = await page.query_selector('button:has-text("Use your password"), a:has-text("Use your password")')
+        if use_pwd:
+            print(f"[*] [{email}] Clicking 'Use your password'...")
+            await use_pwd.click()
+            await asyncio.sleep(1)
+
+        # Google's real password field (not the aria-hidden decoy)
         pwd_sel = 'input[type="password"]:not([aria-hidden="true"])'
         _ = await page.wait_for_selector(pwd_sel, timeout=15000)
         await page.fill(pwd_sel, password)
