@@ -1,0 +1,8 @@
+{
+  "apiUrl": "http://192.168.0.200:8000/api/plugin/update-token",
+  "connectionToken": "your-connection-token-here",
+  "accounts": [
+    { "email": "user1@gmail.com", "password": "password1" },
+    { "email": "user2@gmail.com", "password": "password2" }
+  ]
+}

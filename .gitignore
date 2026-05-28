@@ -1,0 +1,4 @@
+config.json
+accounts/
+.venv/
+*.log
