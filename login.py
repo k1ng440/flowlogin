@@ -117,18 +117,22 @@ def save_session_cookie(acc_dir: Path, cookie: Cookie) -> None:
 async def google_oauth(page: Page, email: str, password: str) -> bool:
     print(f"[*] [{email}] Entering email...")
     try:
-        _ = await page.wait_for_selector("input#identifierId", timeout=12000)
+        _ = await page.wait_for_selector("input#identifierId", timeout=15000)
         await page.fill("input#identifierId", email)
         await asyncio.sleep(0.5)
         await page.click("#identifierNext")
+        # Wait for transition to password page
+        await page.wait_for_load_state("domcontentloaded")
+        await asyncio.sleep(1)
     except Exception as e:
         print(f"[-] [{email}] Email step failed: {e}")
         return False
 
     print(f"[*] [{email}] Entering password...")
     try:
-        _ = await page.wait_for_selector('input[type="password"]:visible', timeout=12000)
-        await page.fill('input[type="password"]:visible', password)
+        # wait_for_selector checks visibility by default; no :visible needed
+        _ = await page.wait_for_selector('input[type="password"]', timeout=15000)
+        await page.fill('input[type="password"]', password)
         await asyncio.sleep(0.5)
         await page.click("#passwordNext")
     except Exception as e:
