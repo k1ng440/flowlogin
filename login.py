@@ -167,7 +167,8 @@ async def extract_session_token(email: str, password: str) -> str | None:
                 await context.add_cookies([saved_session])  # pyright: ignore[reportArgumentType]
 
             print(f"[*] [{email}] Opening {FLOW_URL}...")
-            _ = await page.goto(FLOW_URL, wait_until="networkidle", timeout=30000)
+            _ = await page.goto(FLOW_URL, wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(4)
 
             sign_in_btn = await page.query_selector('button:has(span:text("Create with Google Flow"))')
             if sign_in_btn:
