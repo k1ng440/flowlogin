@@ -1,11 +1,11 @@
 # flowlogin
 
-Headless Google OAuth automation that extracts `__Secure-next-auth.session-token` from [Google Flow](https://labs.google/fx/vi/tools/flow) and pushes it to a [Flow2API](https://github.com/TheSmallHanCat/flow2api) instance.
+Google OAuth automation that extracts `__Secure-next-auth.session-token` from [Google Flow](https://labs.google/fx/vi/tools/flow) and pushes it to a [Flow2API](https://github.com/TheSmallHanCat/flow2api) instance.
 
 ## How it works
 
-1. Launches a headless Chromium browser per account
-2. Clicks "Create with Google Flow" → completes Google OAuth
+1. Launches Chromium via [patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright) in a virtual display (Xvfb) to bypass Google's bot detection
+2. Signs in to Google directly, then navigates to Flow and clicks "Create with Google Flow"
 3. Extracts the NextAuth session token from cookies
 4. POSTs it to your Flow2API endpoint
 5. Saves the session cookie locally — subsequent runs restore it without re-logging in
@@ -14,9 +14,9 @@ Token expires every ~12 hours. Run on a 55-minute schedule to keep it fresh inde
 
 ## Requirements
 
+- Linux with `xvfb-run` (`apt install xvfb`)
 - [uv](https://github.com/astral-sh/uv) — installed automatically by `install.sh`
-- Chromium (`/run/current-system/sw/bin/chromium` on NixOS, adjust `CHROMIUM` in `login.py` for other distros)
-- Accounts with 2FA **disabled** (or use app passwords)
+- Accounts with 2FA **disabled**
 
 ## Setup
 
@@ -39,15 +39,15 @@ cp config.example.json config.json
 
 ```bash
 # All accounts
-uv run --script login.py
+xvfb-run --auto-servernum uv run --script login.py
 
 # Single account
-uv run --script login.py user@gmail.com
+xvfb-run --auto-servernum uv run --script login.py user@gmail.com
 ```
 
 ## Install as systemd service (Linux)
 
-Copies files to `/opt/flowlogin`, installs uv, and enables a timer that runs every 55 minutes.
+Copies files to `/opt/flowlogin`, installs uv and patchright Chromium, and enables a timer that runs every 55 minutes.
 
 ```bash
 sudo bash install.sh
@@ -79,6 +79,7 @@ install.sh               # systemd installer
 
 ## Notes
 
-- Uses [playwright-stealth](https://github.com/Mattwmaster58/playwright_stealth) to bypass bot detection
-- Works well behind [Cloudflare WARP](https://1.1.1.1/) — clean IPs avoid Google challenges
+- Uses [patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright) (drop-in Playwright replacement) to strip automation signals
+- Runs headful via Xvfb — Google's headless detection is the main blocker, virtual display bypasses it
+- Works behind [Cloudflare WARP](https://1.1.1.1/) — QUIC disabled to avoid tunnel conflicts
 - Session cookies are session-scoped (`expires: -1`) and not persisted by Chromium across restarts — the script saves and restores them manually

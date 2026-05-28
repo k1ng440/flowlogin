@@ -2,8 +2,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "playwright>=1.44",
-#   "playwright-stealth>=1.0.6",
+#   "patchright>=1.44",
 #   "httpx>=0.27",
 # ]
 # ///
@@ -15,8 +14,7 @@ import sys
 from pathlib import Path
 from typing import TypedDict, cast
 import httpx
-from playwright.async_api import async_playwright, Page, BrowserContext, Cookie
-from playwright_stealth import Stealth  # type: ignore[import-untyped]
+from patchright.async_api import async_playwright, Page, BrowserContext, Cookie
 
 FLOW_URL = "https://labs.google/fx/vi/tools/flow"
 ACCOUNTS_DIR = Path("accounts")
@@ -24,14 +22,8 @@ CONFIG_FILE = Path("config.json")
 SESSION_COOKIE_NAME = "__Secure-next-auth.session-token"
 
 # None → playwright uses its own bundled chromium (installed via `playwright install chromium`)
-CHROMIUM: str | None = (
-    shutil.which("chromium")
-    or shutil.which("chromium-browser")
-    or shutil.which("google-chrome")
-    or shutil.which("google-chrome-stable")
-    or shutil.which("/run/current-system/sw/bin/chromium")  # NixOS
-    or None
-)
+# Prefer open-source Chromium builds; skip google-chrome which has WARP/network sandbox issues
+CHROMIUM: str | None = None  # always use patchright's own patched binary
 
 LAUNCH_ARGS = [
     "--disable-blink-features=AutomationControlled",
@@ -42,11 +34,17 @@ LAUNCH_ARGS = [
     "--window-size=1280,800",
     "--disable-extensions",
     "--lang=en-US",
+    # Required for Chrome (not Chromium) in headless server environments
+    "--no-zygote",
+    "--disable-gpu",
+    "--disable-software-rasterizer",
+    # WARP uses MASQUE (HTTP/3); disable Chrome's QUIC to avoid tunnel conflicts
+    "--disable-quic",
 ]
 
 UA = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
 )
 
 
@@ -114,41 +112,100 @@ def save_session_cookie(acc_dir: Path, cookie: Cookie) -> None:
     _ = (acc_dir / "session_cookie.json").write_text(json.dumps(dict(cookie), indent=2))
 
 
-async def google_oauth(page: Page, email: str, password: str) -> bool:
-    print(f"[*] [{email}] Entering email...")
+async def screenshot(page: Page, name: str) -> None:
+    import os
+    os.makedirs("/tmp/flowscreenshots", exist_ok=True)
+    path = f"/tmp/flowscreenshots/{name}.png"
+    await page.screenshot(path=path, full_page=True)
+    print(f"[*] Screenshot: {path}")
+
+
+async def google_signin_direct(page: Page, email: str, password: str) -> bool:
+    """Log in via accounts.google.com directly, bypassing OAuth client browser checks."""
+    safe = email.split("@")[0]
+    GOOGLE_SIGNIN = "https://accounts.google.com/signin/v2/identifier?flowName=GlifWebSignIn&flowEntry=ServiceLogin"
+
+    print(f"[*] [{email}] Navigating to Google sign-in directly...")
     try:
-        _ = await page.wait_for_selector("input#identifierId", timeout=15000)
-        await page.fill("input#identifierId", email)
-        await asyncio.sleep(0.5)
-        await page.click("#identifierNext")
-        # Wait for transition to password page
-        await page.wait_for_load_state("domcontentloaded")
-        await asyncio.sleep(1)
+        _ = await page.goto(GOOGLE_SIGNIN, wait_until="domcontentloaded", timeout=20000)
+        await asyncio.sleep(2)
+        await screenshot(page, f"{safe}_1_direct_signin")
     except Exception as e:
-        print(f"[-] [{email}] Email step failed: {e}")
+        print(f"[-] [{email}] Failed to load Google sign-in: {e}")
+        return False
+
+    for attempt in range(4):
+        print(f"[*] [{email}] Entering email (attempt {attempt+1})...")
+        try:
+            _ = await page.wait_for_selector("input#identifierId", timeout=15000)
+            await page.fill("input#identifierId", email)
+            await asyncio.sleep(0.5)
+            await page.click("#identifierNext")
+            await asyncio.sleep(4)
+            await screenshot(page, f"{safe}_{attempt+1}_after_email_next")
+        except Exception as e:
+            print(f"[-] [{email}] Email step failed: {e}")
+            await screenshot(page, f"{safe}_err_email_{attempt+1}")
+            return False
+
+        # Check for "Try again" block page vs password field
+        await asyncio.sleep(2)
+        try_again_loc = page.locator(':text("Try again")')
+        if await try_again_loc.count() == 0:
+            break  # no block page — password field should be up
+
+        print(f"[*] [{email}] Blocked — clicking 'Try again' (attempt {attempt+1}). URL: {page.url}")
+        await screenshot(page, f"{safe}_blocked_{attempt+1}")
+        await try_again_loc.first.click()
+        await asyncio.sleep(3)
+    else:
+        print(f"[-] [{email}] Exhausted retries on 'Couldn't sign you in'.")
         return False
 
     print(f"[*] [{email}] Entering password...")
     try:
-        await asyncio.sleep(2)
-        # Dump visible text so we can debug intermediate screens
-        snippet = (await page.inner_text("body"))[:600].replace("\n", " | ")
-        print(f"[*] [{email}] Page after email step: {snippet}")
-
-        # Click "Use your password" if Google shows an alternate sign-in screen
-        use_pwd = await page.query_selector('button:has-text("Use your password"), a:has-text("Use your password")')
-        if use_pwd:
-            print(f"[*] [{email}] Clicking 'Use your password'...")
-            await use_pwd.click()
-            await asyncio.sleep(1)
-
-        # Google's real password field (not the aria-hidden decoy)
         pwd_sel = 'input[type="password"]:not([aria-hidden="true"])'
         _ = await page.wait_for_selector(pwd_sel, timeout=15000)
         await page.fill(pwd_sel, password)
         await asyncio.sleep(0.5)
         await page.click("#passwordNext")
+        await asyncio.sleep(3)
+        await screenshot(page, f"{safe}_3_after_password")
     except Exception as e:
+        await screenshot(page, f"{safe}_err_password")
+        print(f"[-] [{email}] Password step failed: {e}")
+        return False
+
+    return True
+
+
+async def google_oauth(page: Page, email: str, password: str) -> bool:
+    safe = email.split("@")[0]
+    print(f"[*] [{email}] Entering email...")
+    try:
+        _ = await page.wait_for_selector("input#identifierId", timeout=15000)
+        await screenshot(page, f"{safe}_oauth_1_email")
+        await page.fill("input#identifierId", email)
+        await asyncio.sleep(0.5)
+        await page.click("#identifierNext")
+        await asyncio.sleep(3)
+        await screenshot(page, f"{safe}_oauth_2_after_next")
+    except Exception as e:
+        print(f"[-] [{email}] Email step failed: {e}")
+        await screenshot(page, f"{safe}_err_email")
+        return False
+
+    print(f"[*] [{email}] Entering password...")
+    try:
+        pwd_sel = 'input[type="password"]:not([aria-hidden="true"])'
+        _ = await page.wait_for_selector(pwd_sel, timeout=15000)
+        await page.fill(pwd_sel, password)
+        await asyncio.sleep(0.5)
+        await page.click("#passwordNext")
+        await asyncio.sleep(2)
+        await screenshot(page, f"{safe}_oauth_3_after_password")
+    except Exception as e:
+        await screenshot(page, f"{safe}_err_password")
         print(f"[-] [{email}] Password step failed: {e}")
         return False
 
@@ -160,12 +217,12 @@ async def extract_session_token(email: str, password: str) -> str | None:
     profile_dir = acc_dir / "chrome-profile"
     saved_session = load_saved_session(acc_dir)
 
-    async with Stealth().use_async(async_playwright()) as p:
+    async with async_playwright() as p:
         context: BrowserContext = await p.chromium.launch_persistent_context(
             user_data_dir=str(profile_dir),
-            executable_path=CHROMIUM,
-            headless=True,
+            headless=False,
             args=LAUNCH_ARGS,
+            ignore_default_args=["--enable-automation"],
             locale="en-US",
             timezone_id="America/New_York",
             viewport={"width": 1280, "height": 800},
@@ -188,68 +245,52 @@ async def extract_session_token(email: str, password: str) -> str | None:
                 if saved_session:
                     print(f"[*] [{email}] Saved session expired — re-authenticating...")
                 else:
-                    print(f"[*] [{email}] Not authenticated — clicking 'Create with Google Flow'...")
+                    print(f"[*] [{email}] Not authenticated — signing in to Google directly first...")
 
-                btn_html = await sign_in_btn.evaluate("el => el.outerHTML")
-                print(f"[*] [{email}] Button: {btn_html[:200]}")
-
-                await sign_in_btn.scroll_into_view_if_needed()
-                await asyncio.sleep(0.5)
-                _ = await sign_in_btn.click()
-                print(f"[*] [{email}] Clicked. Polling for OAuth navigation...")
-
-                # Poll up to 20s for popup or same-page navigation to accounts.google.com
-                oauth_page: Page | None = None
-                for i in range(20):
-                    await asyncio.sleep(1)
-                    pages = context.pages
-                    print(f"[*] [{email}]   [{i+1}s] pages={len(pages)} url={page.url[:80]}")
-                    if len(pages) > 1:
-                        oauth_page = pages[-1]
-                        await oauth_page.wait_for_load_state("domcontentloaded")
-                        print(f"[*] [{email}] OAuth popup: {oauth_page.url}")
-                        break
-                    if "accounts.google.com" in page.url:
-                        oauth_page = page
-                        print(f"[*] [{email}] OAuth same-page: {page.url}")
-                        break
-
-                if oauth_page is None:
-                    try:
-                        body = await page.inner_text("body")
-                        print(f"[*] [{email}] Page body snippet: {body[:400]}")
-                    except Exception:
-                        pass
-                    print(f"[-] [{email}] Did not reach Google OAuth after 20s. URL: {page.url}")
-                    return None
-
-                ok = await google_oauth(oauth_page, email, password)
+                # Sign in to Google directly to establish session, avoiding
+                # the OAuth client's embedded-browser block on the redirect flow
+                ok = await google_signin_direct(page, email, password)
                 if not ok:
                     return None
 
-                print(f"[*] [{email}] Waiting for OAuth to complete...")
-                try:
-                    await oauth_page.wait_for_url(
-                        lambda url: "labs.google" in url and "accounts.google" not in url,
-                        timeout=30000,
-                    )
-                except Exception as e:
-                    err_str = str(e)
-                    if "closed" in err_str.lower():
-                        # Popup closed after auth — normal for NextAuth postMessage flow
-                        print(f"[*] [{email}] OAuth popup closed (session should be set).")
-                    else:
-                        try:
-                            body = await oauth_page.inner_text("body")
-                            if any(k in body.lower() for k in ("2-step", "verify", "confirm", "phone", "authenticator")):
-                                print(f"[!] [{email}] 2FA required — headless cannot proceed.")
-                                print("    Disable 2FA or set headless=False to complete manually.")
-                            else:
-                                print(f"[-] [{email}] Redirect timed out. URL: {oauth_page.url}")
-                        except Exception:
-                            print(f"[-] [{email}] Redirect timed out.")
-                        return None
+                # Check if we're signed in to Google (look for myaccount or redirected away from sign-in)
+                await asyncio.sleep(2)
+                safe = email.split("@")[0]
+                await screenshot(page, f"{safe}_4_after_direct_signin")
+                print(f"[*] [{email}] Google sign-in done. URL: {page.url}")
 
+                # Now visit labs.google — Google session should trigger NextAuth automatically
+                print(f"[*] [{email}] Navigating to {FLOW_URL} with active Google session...")
+                _ = await page.goto(FLOW_URL, wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(4)
+                await screenshot(page, f"{safe}_5_flow_after_signin")
+
+                # Click the sign-in button if it still appears (triggers OAuth with active session)
+                sign_in_btn2 = await page.query_selector('button:has(span:text("Create with Google Flow"))')
+                if sign_in_btn2:
+                    print(f"[*] [{email}] Clicking 'Create with Google Flow' with active session...")
+                    _ = await sign_in_btn2.click()
+                    await asyncio.sleep(3)
+                    await screenshot(page, f"{safe}_6_after_flow_click")
+
+                    # With active Google session OAuth should complete without password prompt
+                    # Poll for completion
+                    oauth_page: Page | None = None
+                    for i in range(15):
+                        await asyncio.sleep(1)
+                        pages = context.pages
+                        if len(pages) > 1:
+                            oauth_page = pages[-1]
+                            await oauth_page.wait_for_load_state("domcontentloaded")
+                            print(f"[*] [{email}] OAuth popup: {oauth_page.url}")
+                            break
+                        if "labs.google" in page.url and "accounts.google" not in page.url:
+                            print(f"[*] [{email}] Already on labs.google — session established")
+                            break
+                    else:
+                        print(f"[*] [{email}] Still waiting... URL: {page.url}")
+
+                # Reload flow page to pick up the now-active Google session
                 _ = await page.goto(FLOW_URL, wait_until="domcontentloaded", timeout=30000)
             else:
                 print(f"[*] [{email}] Session active (restored from saved cookie)")
