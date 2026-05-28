@@ -2,6 +2,7 @@
 set -euo pipefail
 
 INSTALL_DIR="/opt/flowlogin"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_USER="${SUDO_USER:-$(whoami)}"
 
 if [[ $EUID -ne 0 ]]; then
@@ -11,7 +12,9 @@ fi
 
 echo "[*] Installing to $INSTALL_DIR..."
 mkdir -p "$INSTALL_DIR"
-cp -r . "$INSTALL_DIR"
+if [[ "$SCRIPT_DIR" != "$INSTALL_DIR" ]]; then
+    cp -r "$SCRIPT_DIR/." "$INSTALL_DIR/"
+fi
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
 
 echo "[*] Installing uv for $SERVICE_USER..."
