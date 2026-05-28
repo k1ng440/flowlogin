@@ -19,7 +19,26 @@ chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
 
 echo "[*] Installing uv for $SERVICE_USER..."
 sudo -u "$SERVICE_USER" bash -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
-UV_BIN="/home/$SERVICE_USER/.local/bin/uv"
+
+# Resolve the actual uv path after install — login shell sources ~/.profile so PATH is correct
+UV_BIN="$(sudo -u "$SERVICE_USER" bash -lc 'which uv 2>/dev/null')" || true
+if [[ -z "$UV_BIN" ]]; then
+    # Fallback: check common install locations
+    for candidate in \
+        "/home/$SERVICE_USER/.local/bin/uv" \
+        "/home/$SERVICE_USER/.cargo/bin/uv" \
+        "/usr/local/bin/uv"; do
+        if [[ -x "$candidate" ]]; then
+            UV_BIN="$candidate"
+            break
+        fi
+    done
+fi
+if [[ -z "$UV_BIN" ]]; then
+    echo "[-] Could not locate uv binary. Install manually and re-run."
+    exit 1
+fi
+echo "[*] Found uv at $UV_BIN"
 
 echo "[*] Installing Python deps..."
 sudo -u "$SERVICE_USER" "$UV_BIN" pip install --python 3.11 playwright playwright-stealth httpx 2>/dev/null || true
