@@ -130,9 +130,11 @@ async def google_oauth(page: Page, email: str, password: str) -> bool:
 
     print(f"[*] [{email}] Entering password...")
     try:
-        # wait_for_selector checks visibility by default; no :visible needed
-        _ = await page.wait_for_selector('input[type="password"]', timeout=15000)
-        await page.fill('input[type="password"]', password)
+        # Google injects a hidden decoy input[type=password][aria-hidden=true];
+        # target the real visible one by name or by excluding aria-hidden
+        pwd_sel = 'input[type="password"]:not([aria-hidden="true"])'
+        _ = await page.wait_for_selector(pwd_sel, timeout=15000)
+        await page.fill(pwd_sel, password)
         await asyncio.sleep(0.5)
         await page.click("#passwordNext")
     except Exception as e:
