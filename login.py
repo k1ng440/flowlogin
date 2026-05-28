@@ -167,8 +167,7 @@ async def extract_session_token(email: str, password: str) -> str | None:
                 await context.add_cookies([saved_session])  # pyright: ignore[reportArgumentType]
 
             print(f"[*] [{email}] Opening {FLOW_URL}...")
-            _ = await page.goto(FLOW_URL, wait_until="domcontentloaded", timeout=30000)
-            await asyncio.sleep(2)
+            _ = await page.goto(FLOW_URL, wait_until="networkidle", timeout=30000)
 
             sign_in_btn = await page.query_selector('button:has(span:text("Create with Google Flow"))')
             if sign_in_btn:
@@ -177,13 +176,20 @@ async def extract_session_token(email: str, password: str) -> str | None:
                 else:
                     print(f"[*] [{email}] Not authenticated — clicking 'Create with Google Flow'...")
 
-                _ = await sign_in_btn.click()
+                btn_html = await sign_in_btn.evaluate("el => el.outerHTML")
+                print(f"[*] [{email}] Button: {btn_html[:200]}")
 
-                # Poll up to 15s for popup or same-page navigation to accounts.google.com
+                await sign_in_btn.scroll_into_view_if_needed()
+                await asyncio.sleep(0.5)
+                _ = await sign_in_btn.click()
+                print(f"[*] [{email}] Clicked. Polling for OAuth navigation...")
+
+                # Poll up to 20s for popup or same-page navigation to accounts.google.com
                 oauth_page: Page | None = None
-                for _ in range(15):
+                for i in range(20):
                     await asyncio.sleep(1)
                     pages = context.pages
+                    print(f"[*] [{email}]   [{i+1}s] pages={len(pages)} url={page.url[:80]}")
                     if len(pages) > 1:
                         oauth_page = pages[-1]
                         await oauth_page.wait_for_load_state("domcontentloaded")
@@ -195,7 +201,12 @@ async def extract_session_token(email: str, password: str) -> str | None:
                         break
 
                 if oauth_page is None:
-                    print(f"[-] [{email}] Did not reach Google OAuth after 15s. URL: {page.url}")
+                    try:
+                        body = await page.inner_text("body")
+                        print(f"[*] [{email}] Page body snippet: {body[:400]}")
+                    except Exception:
+                        pass
+                    print(f"[-] [{email}] Did not reach Google OAuth after 20s. URL: {page.url}")
                     return None
 
                 ok = await google_oauth(oauth_page, email, password)
