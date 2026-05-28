@@ -79,6 +79,6 @@ install.sh               # systemd installer
 
 ## Notes
 
-- Uses [playwright-stealth](https://github.com/AtuboDad/playwright-stealth) to bypass bot detection
+- Uses [playwright-stealth](https://github.com/Mattwmaster58/playwright_stealth) to bypass bot detection
 - Works well behind [Cloudflare WARP](https://1.1.1.1/) — clean IPs avoid Google challenges
 - Session cookies are session-scoped (`expires: -1`) and not persisted by Chromium across restarts — the script saves and restores them manually
