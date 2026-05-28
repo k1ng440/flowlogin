@@ -43,6 +43,9 @@ echo "[*] Found uv at $UV_BIN"
 echo "[*] Installing Python deps..."
 sudo -u "$SERVICE_USER" "$UV_BIN" pip install --python 3.11 playwright playwright-stealth httpx 2>/dev/null || true
 
+echo "[*] Installing playwright chromium..."
+sudo -u "$SERVICE_USER" "$UV_BIN" run --with playwright playwright install chromium
+
 echo "[*] Writing systemd units..."
 cat > /etc/systemd/system/flowlogin.service <<EOF
 [Unit]

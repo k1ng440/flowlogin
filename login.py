@@ -10,6 +10,7 @@
 
 import asyncio
 import json
+import shutil
 import sys
 from pathlib import Path
 from typing import TypedDict, cast
@@ -20,8 +21,17 @@ from playwright_stealth import Stealth  # type: ignore[import-untyped]
 FLOW_URL = "https://labs.google/fx/vi/tools/flow"
 ACCOUNTS_DIR = Path("accounts")
 CONFIG_FILE = Path("config.json")
-CHROMIUM = "/run/current-system/sw/bin/chromium"
 SESSION_COOKIE_NAME = "__Secure-next-auth.session-token"
+
+# None → playwright uses its own bundled chromium (installed via `playwright install chromium`)
+CHROMIUM: str | None = (
+    shutil.which("chromium")
+    or shutil.which("chromium-browser")
+    or shutil.which("google-chrome")
+    or shutil.which("google-chrome-stable")
+    or shutil.which("/run/current-system/sw/bin/chromium")  # NixOS
+    or None
+)
 
 LAUNCH_ARGS = [
     "--disable-blink-features=AutomationControlled",
