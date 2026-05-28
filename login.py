@@ -178,19 +178,24 @@ async def extract_session_token(email: str, password: str) -> str | None:
                     print(f"[*] [{email}] Not authenticated — clicking 'Create with Google Flow'...")
 
                 _ = await sign_in_btn.click()
-                await asyncio.sleep(2)
 
-                # Detect whether OAuth opened as a popup or navigated in place
-                pages = context.pages
-                if len(pages) > 1:
-                    oauth_page = pages[-1]
-                    await oauth_page.wait_for_load_state("domcontentloaded")
-                    print(f"[*] [{email}] OAuth popup: {oauth_page.url}")
-                elif "accounts.google.com" in page.url:
-                    oauth_page = page
-                    print(f"[*] [{email}] OAuth same-page: {page.url}")
-                else:
-                    print(f"[-] [{email}] Did not reach Google OAuth. URL: {page.url}")
+                # Poll up to 15s for popup or same-page navigation to accounts.google.com
+                oauth_page: Page | None = None
+                for _ in range(15):
+                    await asyncio.sleep(1)
+                    pages = context.pages
+                    if len(pages) > 1:
+                        oauth_page = pages[-1]
+                        await oauth_page.wait_for_load_state("domcontentloaded")
+                        print(f"[*] [{email}] OAuth popup: {oauth_page.url}")
+                        break
+                    if "accounts.google.com" in page.url:
+                        oauth_page = page
+                        print(f"[*] [{email}] OAuth same-page: {page.url}")
+                        break
+
+                if oauth_page is None:
+                    print(f"[-] [{email}] Did not reach Google OAuth after 15s. URL: {page.url}")
                     return None
 
                 ok = await google_oauth(oauth_page, email, password)
