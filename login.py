@@ -174,34 +174,47 @@ async def extract_session_token(email: str, password: str) -> str | None:
                     print(f"[*] [{email}] Not authenticated — clicking 'Create with Google Flow'...")
 
                 _ = await sign_in_btn.click()
+                await asyncio.sleep(2)
 
-                try:
-                    await page.wait_for_url(lambda url: "accounts.google.com" in url, timeout=15000)
-                except Exception:
+                # Detect whether OAuth opened as a popup or navigated in place
+                pages = context.pages
+                if len(pages) > 1:
+                    oauth_page = pages[-1]
+                    await oauth_page.wait_for_load_state("domcontentloaded")
+                    print(f"[*] [{email}] OAuth popup: {oauth_page.url}")
+                elif "accounts.google.com" in page.url:
+                    oauth_page = page
+                    print(f"[*] [{email}] OAuth same-page: {page.url}")
+                else:
                     print(f"[-] [{email}] Did not reach Google OAuth. URL: {page.url}")
                     return None
 
-                ok = await google_oauth(page, email, password)
+                ok = await google_oauth(oauth_page, email, password)
                 if not ok:
                     return None
 
-                print(f"[*] [{email}] Waiting for redirect back to labs.google...")
+                print(f"[*] [{email}] Waiting for OAuth to complete...")
                 try:
-                    await page.wait_for_url(
+                    await oauth_page.wait_for_url(
                         lambda url: "labs.google" in url and "accounts.google" not in url,
-                        timeout=25000,
+                        timeout=30000,
                     )
-                except Exception:
-                    try:
-                        body = await page.inner_text("body")
-                        if any(k in body.lower() for k in ("2-step", "verify", "confirm", "phone", "authenticator")):
-                            print(f"[!] [{email}] 2FA required — headless cannot proceed.")
-                            print("    Disable 2FA or set headless=False to complete manually.")
-                        else:
-                            print(f"[-] [{email}] Redirect timed out. URL: {page.url}")
-                    except Exception:
-                        print(f"[-] [{email}] Redirect timed out. URL: {page.url}")
-                    return None
+                except Exception as e:
+                    err_str = str(e)
+                    if "closed" in err_str.lower():
+                        # Popup closed after auth — normal for NextAuth postMessage flow
+                        print(f"[*] [{email}] OAuth popup closed (session should be set).")
+                    else:
+                        try:
+                            body = await oauth_page.inner_text("body")
+                            if any(k in body.lower() for k in ("2-step", "verify", "confirm", "phone", "authenticator")):
+                                print(f"[!] [{email}] 2FA required — headless cannot proceed.")
+                                print("    Disable 2FA or set headless=False to complete manually.")
+                            else:
+                                print(f"[-] [{email}] Redirect timed out. URL: {oauth_page.url}")
+                        except Exception:
+                            print(f"[-] [{email}] Redirect timed out.")
+                        return None
 
                 _ = await page.goto(FLOW_URL, wait_until="domcontentloaded", timeout=30000)
             else:
