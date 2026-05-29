@@ -55,6 +55,7 @@ Description=Flow2API session token updater
 Type=oneshot
 User=$SERVICE_USER
 WorkingDirectory=$INSTALL_DIR
+Environment=HOME=/root
 ExecStart=/usr/bin/xvfb-run -a $UV_BIN run --script $INSTALL_DIR/login.py
 StandardOutput=journal
 StandardError=journal

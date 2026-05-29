@@ -2,3 +2,6 @@ config.json
 accounts/
 .venv/
 *.log
+.playwright-mcp/
+cookies.json
+cookies.txt
